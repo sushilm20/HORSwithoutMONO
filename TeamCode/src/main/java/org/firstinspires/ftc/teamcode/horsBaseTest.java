@@ -17,7 +17,7 @@ public class horsBaseTest extends LinearOpMode {
     private DcMotor turret = null;
 
     private double shooterPower = 1.0;
-    private boolean shooterOn = true;
+    private boolean shooterOn = true;//ikd
     private boolean yPressedLast = false;
 
     private int turretTarget = 0;
