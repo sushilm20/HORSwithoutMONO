@@ -94,12 +94,12 @@ public class horsBaseTest extends LinearOpMode {
             }
 
             // Turret movement with bumpers
-            if (gamepad1.right_bumper) {
+            if (gamepad2.right_bumper) {
                 turretTarget += TICKS_PER_INCREMENT;
                 turret.setTargetPosition(turretTarget);
                 turret.setPower(0.5);
                 sleep(200);
-            } else if (gamepad1.left_bumper) {
+            } else if (gamepad2.left_bumper) {
                 turretTarget -= TICKS_PER_INCREMENT;
                 turret.setTargetPosition(turretTarget);
                 turret.setPower(0.5);
