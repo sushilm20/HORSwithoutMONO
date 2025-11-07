@@ -49,14 +49,25 @@ public class AutoShooterIntakeClawDrive extends LinearOpMode {
 
         waitForStart();
 
-        // Step 1: Shooter ON
-        shooter.setPower(0.8);
+        frontLeftDrive.setPower(0.5);
+        backLeftDrive.setPower(0.5);
+        frontRightDrive.setPower(0.5);
+        backRightDrive.setPower(0.5);
+        sleep(100);
 
-        // Step 2: Intake + Compression ON for 10 seconds
+
+
+
+
+        // Step 1: Shooter ON for 3 seconds
+        shooter.setPower(0.8);
+        sleep(3000);
+
+        // Step 2: Intake + Compression ON for 5 seconds (shooter continues)
         intakeMotor.setPower(1.0);
         leftCompressionServo.setPosition(1.0);  // Forward
         rightCompressionServo.setPosition(0.0); // Reverse
-        sleep(10000); // Run for 10 seconds
+        sleep(5000);
 
         // Step 3: Stop intake + compression
         intakeMotor.setPower(0.0);
@@ -83,7 +94,7 @@ public class AutoShooterIntakeClawDrive extends LinearOpMode {
         frontRightDrive.setPower(0.0);
         backRightDrive.setPower(0.0);
 
-        // Optional: Stop shooter
+        // Step 6: Stop shooter
         shooter.setPower(0.0);
 
         telemetry.addData("Status", "Sequence Complete");
