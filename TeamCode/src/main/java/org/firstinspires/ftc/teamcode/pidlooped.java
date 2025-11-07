@@ -5,7 +5,7 @@ import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.Servo;
 
-@TeleOp(name="HORS BRAIN", group="Linear OpMode")
+@TeleOp(name="ComplexityHORS", group="Linear OpMode")
 public class pidlooped extends LinearOpMode {
 
     private DcMotor frontLeftDrive, backLeftDrive, frontRightDrive, backRightDrive;
@@ -15,7 +15,7 @@ public class pidlooped extends LinearOpMode {
 
     // shooter control state
     private boolean shooterOn = true; // default start ON
-    private static final double MAX_RPM = 6000.0; // adjust if different
+    private static final double MAX_RPM = 200; // adjust if different
     private static final double TICKS_PER_REV = 537.6; // encoder ticks per motor rev (may require gear ratio correction)
     private double currentRPM = 0.0;       // EMA-smoothed scaled RPM used by controller
     private int lastShooterPosition = 0;
