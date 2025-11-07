@@ -26,7 +26,7 @@ public class pidlooped extends LinearOpMode {
     private double emaAlpha = 0.15; // smoother for RPM
 
     // RPM scaling & calibration
-    private double rpmScale = 1.0; // multiply raw encoder-derived RPM by this to correct scale
+    private double rpmScale = 0.78; // multiply raw encoder-derived RPM by this to correct scale
     private boolean yPressedLast = false;
 
     // dpad/button debounce state (working for either gamepad)
