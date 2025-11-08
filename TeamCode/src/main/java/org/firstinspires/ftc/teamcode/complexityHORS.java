@@ -6,7 +6,7 @@ import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.Servo;
 
 @TeleOp(name="ComplexityHORS", group="Linear OpMode")
-public class pidlooped extends LinearOpMode {
+public class complexityHORS extends LinearOpMode {
 
     private DcMotor frontLeftDrive, backLeftDrive, frontRightDrive, backRightDrive;
     private DcMotor shooter, turret, intakeMotor;
@@ -21,7 +21,7 @@ public class pidlooped extends LinearOpMode {
     private int lastShooterPosition = 0;
     private long lastShooterTime = 0L;
 
-    private double targetRPM = 6000.0;
+    private double targetRPM = MAX_RPM;
     private double kP = 0.0003; // tune as needed
     private double emaAlpha = 0.15; // smoother for RPM
 
@@ -58,6 +58,19 @@ public class pidlooped extends LinearOpMode {
     private long clawActionStartMs = 0L;
     private static final long CLAW_CLOSE_MS = 500L;
 
+    // --- NEW: Far / Close mode state controlled by gamepad1 touchpad ---
+    // Default mode is "close" (isFarMode == false). A tap (rising edge) toggles to far.
+    private boolean isFarMode = false;               // default = close
+    private boolean touchpadPressedLast = false;     // for rising-edge detection
+
+    // Mode-specific parameters (user requested values)
+    private static final double TURRET_SPEED_CLOSE = 0.3;
+    private static final double TURRET_SPEED_FAR   = 0.3;
+    private static final double RIGHT_HOOD_CLOSE   = 0.12;
+    private static final double RIGHT_HOOD_FAR     = 0.24;
+    private static final double TARGET_RPM_CLOSE   = 100.0;
+    private static final double TARGET_RPM_FAR     = 167.0;
+
     @Override
     public void runOpMode() {
 
@@ -92,15 +105,20 @@ public class pidlooped extends LinearOpMode {
         leftCompressionServo.setPosition(0.5);
         rightCompressionServo.setPosition(0.5);
         leftHoodServo.setPosition(leftHoodPosition);
+
+        // Set right hood according to the default mode (close)
+        rightHoodPosition = RIGHT_HOOD_CLOSE;
         rightHoodServo.setPosition(rightHoodPosition);
 
-        telemetry.addData("Status", "Initialized");
+        // Set shooter target according to default mode (close)
+        targetRPM = TARGET_RPM_CLOSE;
+
+        telemetry.addData("Status", "Initialized (mode = CLOSE)");
         telemetry.update();
 
         // initialize shooter timing/position
         lastShooterPosition = shooter.getCurrentPosition();
         lastShooterTime = System.currentTimeMillis();
-        targetRPM = MAX_RPM;
         shooterOn = true;
 
         waitForStart();
@@ -108,7 +126,49 @@ public class pidlooped extends LinearOpMode {
         while (opModeIsActive()) {
             long nowMs = System.currentTimeMillis();
 
+            // -------------------------
+            // Handle mode toggle (touchpad tap on gamepad1)
+            // -------------------------
+            boolean touchpadNow = false;
+            // Try to read a PS5 touchpad mapping if available; fallback to both-stick-press as an alternate tap
+            try {
+                touchpadNow = gamepad1.touchpad;
+            } catch (Throwable t) {
+                // Fallback: simultaneous press of both stick buttons as alternate "touchpad tap"
+                touchpadNow = (gamepad1.left_stick_button && gamepad1.right_stick_button);
+            }
+
+            if (touchpadNow && !touchpadPressedLast) {
+                // Rising edge detected: toggle mode
+                isFarMode = !isFarMode;
+
+                if (isFarMode) {
+                    // switched to FAR: apply FAR-mode defaults immediately
+                    rightHoodPosition = RIGHT_HOOD_FAR;
+                    rightHoodServo.setPosition(rightHoodPosition);
+
+                    // override any manual targetRPM/servo and set to FAR values
+                    targetRPM = TARGET_RPM_FAR;
+                    shooterOn = true;
+
+                    telemetry.addData("Mode", "FAR");
+                } else {
+                    // switched to CLOSE: apply CLOSE-mode defaults immediately
+                    rightHoodPosition = RIGHT_HOOD_CLOSE;
+                    rightHoodServo.setPosition(rightHoodPosition);
+
+                    // override any manual targetRPM/servo and set to CLOSE values
+                    targetRPM = TARGET_RPM_CLOSE;
+                    shooterOn = true;
+
+                    telemetry.addData("Mode", "CLOSE");
+                }
+            }
+            touchpadPressedLast = touchpadNow;
+
+            // -------------------------
             // DRIVE
+            // -------------------------
             double axial   = -gamepad1.left_stick_y;
             double lateral = -gamepad1.left_stick_x;
             double yaw     = -gamepad1.right_stick_x;
@@ -135,7 +195,10 @@ public class pidlooped extends LinearOpMode {
             backLeftDrive.setPower(backLeftPower * driveSpeed);
             backRightDrive.setPower(backRightPower * driveSpeed);
 
+            // -------------------------
             // DPAD and toggle handling (rising edge) for both gamepads
+            // (manual dpad changes still allowed; touchpad will override them when tapped)
+            // -------------------------
             boolean dpadDownNow = gamepad1.dpad_down || gamepad2.dpad_down;
             if (dpadDownNow && !dpadDownLast) {
                 shooterOn = !shooterOn;
@@ -154,7 +217,9 @@ public class pidlooped extends LinearOpMode {
             }
             dpadRightLast = dpadRightNow;
 
+            // -------------------------
             // RPM measurement from encoder (non-blocking)
+            // -------------------------
             int currentPosition = shooter.getCurrentPosition();
             int deltaTicks = currentPosition - lastShooterPosition;
             long deltaTimeMs = nowMs - lastShooterTime;
@@ -162,7 +227,6 @@ public class pidlooped extends LinearOpMode {
             double ticksPerSec = (deltaTicks * 1000.0) / deltaTimeMs;
             double measuredRPMRaw = (ticksPerSec / TICKS_PER_REV) * 60.0; // raw (before scale)
 
-            // Optionally flip sign if direction mismatch; we clamp below to >=0
             // Apply scaling to raw reading to match actual rpm if TICKS_PER_REV doesn't reflect gearbox
             double measuredRPMScaled = measuredRPMRaw * rpmScale;
 
@@ -175,11 +239,9 @@ public class pidlooped extends LinearOpMode {
             // Quick calibration: press Y on either gamepad to set rpmScale = targetRPM / measuredRPMRaw
             boolean yNow = gamepad1.y || gamepad2.y;
             if (yNow && !yPressedLast) {
-                // only calibrate if measuredRPMRaw is reasonable to avoid divide-by-zero
                 double safeMeasured = Math.abs(measuredRPMRaw);
                 if (safeMeasured >= 1.0) {
                     double candidateScale = targetRPM / measuredRPMRaw;
-                    // clamp scale to avoid crazy values
                     if (candidateScale < 0.2) candidateScale = 0.2;
                     if (candidateScale > 3.0) candidateScale = 3.0;
                     rpmScale = candidateScale;
@@ -189,7 +251,9 @@ public class pidlooped extends LinearOpMode {
             }
             yPressedLast = yNow;
 
+            // -------------------------
             // Shooter motor control: feedforward + P
+            // -------------------------
             double ff = targetRPM / Math.max(1.0, MAX_RPM);
             double error = targetRPM - currentRPM;
             double pTerm = kP * error;
@@ -197,7 +261,9 @@ public class pidlooped extends LinearOpMode {
             shooterPower = Math.max(0.0, Math.min(1.0, shooterPower));
             shooter.setPower(shooterOn ? shooterPower : 0.0);
 
+            // -------------------------
             // RUMBLE: when within tolerance for the first loop, start a 1s rumble (non-blocking)
+            // -------------------------
             boolean atTargetNow = Math.abs(targetRPM - currentRPM) <= TARGET_TOLERANCE_RPM;
             if (atTargetNow && !atTargetLast) {
                 rumbling = true;
@@ -208,23 +274,31 @@ public class pidlooped extends LinearOpMode {
             atTargetLast = atTargetNow;
 
             if (rumbling && nowMs > rumbleEndTimeMs) {
-                // if explicit stop is required in your SDK, call it here
                 rumbling = false;
             }
 
+            // -------------------------
             // TURRET control with encoder limits (non-blocking)
+            // turret speed is adjusted by current mode (far/close)
+            // -------------------------
             int turretPos = turret.getCurrentPosition();
             double turretPower = 0.0;
+
+            // Choose speed based on mode
+            double turretSpeed = isFarMode ? TURRET_SPEED_FAR : TURRET_SPEED_CLOSE;
+
             if (gamepad1.right_bumper || gamepad2.left_stick_x > 0.2) {
-                if (turretPos < TURRET_MAX_POS) turretPower = 0.2;
+                if (turretPos < TURRET_MAX_POS) turretPower = turretSpeed;
             } else if (gamepad1.left_bumper || gamepad2.left_stick_x < -0.2) {
-                if (turretPos > TURRET_MIN_POS) turretPower = -0.2;
+                if (turretPos > TURRET_MIN_POS) turretPower = -turretSpeed;
             } else {
                 turretPower = 0.0;
             }
             turret.setPower(turretPower);
 
+            // -------------------------
             // INTAKE + COMPRESSION
+            // -------------------------
             if ((gamepad1.right_trigger > 0.1) || (gamepad2.right_trigger > 0.1)) {
                 intakeMotor.setPower(1.0);
                 leftCompressionServo.setPosition(1.0);
@@ -235,10 +309,11 @@ public class pidlooped extends LinearOpMode {
                 rightCompressionServo.setPosition(0.5);
             }
 
+            // -------------------------
             // CLAW single-press toggle using non-blocking timed phases
+            // -------------------------
             boolean xNow = gamepad1.x || gamepad2.x;
             if (xNow && !xPressedLast) {
-                // start claw action: close then reopen after CLAW_CLOSE_MS
                 clawServo.setPosition(0.2);
                 clawActionPhase = 1;
                 clawActionStartMs = nowMs;
@@ -250,7 +325,9 @@ public class pidlooped extends LinearOpMode {
                 clawActionPhase = 0;
             }
 
+            // -------------------------
             // LEFT HOOD servo adjustments with A/B (gamepad1) rate-limited (non-blocking)
+            // -------------------------
             if (gamepad1.a && nowMs - lastLeftHoodAdjustMs >= HOOD_ADJUST_DEBOUNCE_MS) {
                 lastLeftHoodAdjustMs = nowMs;
                 leftHoodPosition += 0.025;
@@ -264,7 +341,10 @@ public class pidlooped extends LinearOpMode {
                 leftHoodServo.setPosition(leftHoodPosition);
             }
 
+            // -------------------------
             // RIGHT HOOD servo controlled by gamepad2 right stick Y, with rate-limited adjustments
+            // Manual right-hood control still allowed; a touchpad tap will immediately override it
+            // -------------------------
             if (gamepad2.right_stick_y < -0.2 && nowMs - lastRightHoodAdjustMs >= HOOD_ADJUST_DEBOUNCE_MS) {
                 lastRightHoodAdjustMs = nowMs;
                 rightHoodPosition += 0.01;
@@ -277,21 +357,24 @@ public class pidlooped extends LinearOpMode {
                 rightHoodServo.setPosition(rightHoodPosition);
             }
 
-            // Telemetry: show raw, scaled, scale factor, and control values
+            // Telemetry: show mode and important values
+            // -------------------------
             telemetry.addData("Status", "Running");
-            telemetry.addData("Shooter State", shooterOn ? "ON" : "OFF");
+            telemetry.addData("Mode", isFarMode ? "FAR" : "CLOSE");
+//            telemetry.addData("Shooter State", shooterOn ? "ON" : "OFF");
             telemetry.addData("Target RPM", "%.0f", targetRPM);
-            telemetry.addData("Measured RPM Raw", "%.2f", measuredRPMRaw);
+//            telemetry.addData("Measured RPM Raw", "%.2f", measuredRPMRaw);
             telemetry.addData("Measured RPM Scaled", "%.2f", measuredRPMScaled);
             telemetry.addData("Smoothed RPM (used)", "%.2f", currentRPM);
-            telemetry.addData("rpmScale", "%.4f", rpmScale);
+//            telemetry.addData("rpmScale", "%.4f", rpmScale);
             telemetry.addData("Shooter Power", "%.3f", shooterOn ? shooterPower : 0.0);
-            telemetry.addData("At Target", atTargetNow);
+//            telemetry.addData("At Target", atTargetNow);
             telemetry.addData("Turret Encoder", turret.getCurrentPosition());
-            telemetry.addData("Claw Pos", "%.2f", clawServo.getPosition());
-            telemetry.addData("Left Hood", "%.3f", leftHoodPosition);
+//            telemetry.addData("Turret Speed (mode)", "%.3f", turretSpeed);
+//            telemetry.addData("Claw Pos", "%.2f", clawServo.getPosition());
+//            telemetry.addData("Left Hood", "%.3f", leftHoodPosition);
             telemetry.addData("Right Hood", "%.3f", rightHoodPosition);
-            telemetry.addData("Calibrate: Press Y", "sets rpmScale = targetRPM / rawRPM");
+//            telemetry.addData("Calibrate: Press Y", "sets rpmScale = targetRPM / rawRPM");
             telemetry.update();
         }
     }

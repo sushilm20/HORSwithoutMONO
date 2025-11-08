@@ -6,8 +6,8 @@ import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
-@Autonomous(name="HORS Auto Sequence v2", group="Linear OpMode")
-public class HORStimeauto extends LinearOpMode {
+@Autonomous(name="HORS Far auto", group="Linear OpMode")
+public class HORSfarauto extends LinearOpMode {
 
     // Drive motors (same names as teleop)
     private DcMotor frontLeftDrive, backLeftDrive, frontRightDrive, backRightDrive;
@@ -19,35 +19,33 @@ public class HORStimeauto extends LinearOpMode {
     private ElapsedTime runtime = new ElapsedTime();
 
     // Shooter control state & tuning (copied from your teleop)
-    private boolean shooterOn = false; // start OFF during movement stage per request
-    private static final double MAX_RPM = 200.0; // matches your teleop file. the gobilda only does 190, (this is not rpm output of motor but the ticks per sec)
+    private boolean shooterOn = false; // start OFF until after initial short drive
+    private static final double MAX_RPM = 200.0; // keep consistent with your teleop
     private static final double TICKS_PER_REV = 537.6;
     private double currentRPM = 0.0;
     private int lastShooterPosition = 0;
     private long lastShooterTime = 0L;
 
-    private double targetRPM = 120.0; // 120 rpm shooting, go for gamble since doc doesnt want to give me field tiled smh..
+    // Autonomous target for this routine
+    private double targetRPM = 180.0; // requested 180 RPM
     private double kP = 0.0003;
     private double emaAlpha = 0.15;
 
     // Scaling and calibration (kept from your teleop)
-    private double rpmScale = 0.78; // this should be same from ur teleoppping.
+    private double rpmScale = 0.78;
     private double ffGain = 0.8;
     private static final double MAX_SHOOTER_POWER = 0.9;
 
-    // Hood/claw positions
+    // Hood/claw and turret settings
     private double leftHoodPosition = 0.12;
     private double rightHoodPosition = 0.12;
-
-    // Claw timing
     private static final long CLAW_CLOSE_MS = 500L;
-
-    // Turret movement tolerance
     private static final int TURRET_TARGET_TOLERANCE = 5;
+    private static final double TARGET_TOLERANCE_RPM = 5.0; // tolerance used to detect "at target" condition
 
     @Override
     public void runOpMode() {
-        // Hardware map (same names used in teleop)
+        // Hardware map (names must match your robot configuration)
         frontLeftDrive = hardwareMap.get(DcMotor.class, "frontLeft");
         backLeftDrive = hardwareMap.get(DcMotor.class, "backLeft");
         frontRightDrive = hardwareMap.get(DcMotor.class, "frontRight");
@@ -61,7 +59,7 @@ public class HORStimeauto extends LinearOpMode {
         leftHoodServo = hardwareMap.get(Servo.class, "leftHoodServo");
         rightHoodServo = hardwareMap.get(Servo.class, "rightHoodServo");
 
-        // Directions and modes (match teleop)
+        // Directions & modes matching teleop setup
         frontLeftDrive.setDirection(DcMotor.Direction.FORWARD);
         backLeftDrive.setDirection(DcMotor.Direction.FORWARD);
         frontRightDrive.setDirection(DcMotor.Direction.REVERSE);
@@ -75,7 +73,7 @@ public class HORStimeauto extends LinearOpMode {
         turret.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         turret.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
-        // Initial servo positions
+        // initial servo positions
         clawServo.setPosition(0.63);
         leftCompressionServo.setPosition(0.5);
         rightCompressionServo.setPosition(0.5);
@@ -89,62 +87,48 @@ public class HORStimeauto extends LinearOpMode {
         lastShooterPosition = shooter.getCurrentPosition();
         lastShooterTime = System.currentTimeMillis();
 
+        // Wait for start
         waitForStart();
 
-        // Sequence requested:
-        // 1) drive forward 1s
-        // 2) turn right 1s
-        // After movement/turn completed:
-        // 3) turn shooter on at RPM=120 (use PID loop)
-        // 4) rotate turret to encoder position 300
-        // 5) right hood servo to 0.24
-        // 6) intake sequence: spin 1s, stop 1s, spin 1s, spin 1s, then claw action
-        // 7) turn off shooter and stop
+        // Sequence:
+        // 1) Drive forward for 0.3s
+        setDrivePower(0.5, 0.5);
+        holdForSeconds(0.3);
 
-        // 1) Drive forward for 1s
-        setDrivePower(0.6, 0.6);
-        holdForSeconds(1.0);
-
-        // brief stop
+        // short stop
         setDrivePower(0.0, 0.0);
         holdForSeconds(0.05);
 
-        // 2) Turn right for 1s (left positive, right negative)
-        setDrivePower(0.5, -0.5);
-        holdForSeconds(1.0);
-
-        // stop drive
-        setDrivePower(0.0, 0.0);
-        holdForSeconds(0.05);
-
-        // 3) Turn shooter ON at 120 RPM (shooter loop will run continuously)
-        targetRPM = 120.0;
+        // 2) Turn shooter ON at 180 RPM and start regulating
+        targetRPM = 180.0;
         shooterOn = true;
-        // kick-off shooter regulation loop briefly before turret movement
-        // hold a short period so shooter can begin spinning while turret moves
-        holdForSeconds(0.25);
+        // allow shooter to begin to spin while turret moves
+        holdForSeconds(0.2);
 
-        // 4) Rotate turret to encoder position 300 (blocking until reached or timeout)
-        moveTurretToPosition(100, 3.0); // 3s timeout to avoid infinite loop
+        // 3) Move turret to encoder position -200 (blocking until reached or timeout)
+        moveTurretToPosition(-200, 3.0); // 3s timeout
 
-        // 5) Adjust shooter angle: right hood to 0.24 (shooter continues to be regulated)
+        // 4) Adjust right hood to target angle
         rightHoodPosition = 0.24;
         rightHoodServo.setPosition(rightHoodPosition);
         holdForSeconds(0.15);
 
-        // 6) Intake automatic sequence:
-        // Sequence: spin 1s, pause 1s, spin 1s, spin 1s, then claw action
+        // 5) Intake automatic sequence while shooter stays ON:
+        // Sequence: spin 1s, then PAUSE up to 1s OR until shooter reaches RPM (whichever happens first),
+        // then spin 1s, then spin 1s, then claw action
+
         // Move #1: intake ON 1s
         leftCompressionServo.setPosition(1.0);
         rightCompressionServo.setPosition(0.0);
         intakeMotor.setPower(1.0);
         holdForSeconds(1.0);
 
-        // Pause 1s
+        // Pause: stop intake and wait up to 1s OR until shooter within tolerance
         intakeMotor.setPower(0.0);
         leftCompressionServo.setPosition(0.5);
         rightCompressionServo.setPosition(0.5);
-        holdForSeconds(1.0);
+        // wait up to 1.0s but proceed early if shooter reaches targetRPM ± tolerance
+        waitUntilAtTargetOrTimeout(1.0);
 
         // Move #2: intake ON 1s
         leftCompressionServo.setPosition(1.0);
@@ -164,32 +148,35 @@ public class HORStimeauto extends LinearOpMode {
         rightCompressionServo.setPosition(0.5);
         holdForSeconds(0.05);
 
-        // Claw action: close then reopen (simulates X button action)
+        // Claw action: close then reopen (simulate X button)
         clawServo.setPosition(0.2); // close
         holdForSeconds(CLAW_CLOSE_MS / 1000.0);
         clawServo.setPosition(0.63); // reopen
 
-        // Short settle while shooter still regulated
-        holdForSeconds(0.1);
+        // 6) After those actions, move forward briefly (duration chosen 0.5s)
+        setDrivePower(0.5, 0.5);
+        holdForSeconds(0.5);
 
-        // 7) Turn off shooter motor and stop everything
+        // Stop drive
+        setDrivePower(0.0, 0.0);
+        holdForSeconds(0.05);
+
+        // 7) Turn off shooter and ensure all mechanisms stopped
         shooterOn = false;
         shooter.setPower(0.0);
-
-        setDrivePower(0.0, 0.0);
         intakeMotor.setPower(0.0);
         turret.setPower(0.0);
+        setDrivePower(0.0, 0.0);
 
-        telemetry.addData("Auto", "Sequence complete");
+        telemetry.addData("Auto", "FarBall sequence complete");
         telemetry.update();
 
-        // final brief hold so telemetry can be read
+        // final telemetry hold
         holdForSeconds(0.5);
     }
 
     // Helper: update shooter regulation using same logic as teleop
     private void updateShooter(long nowMs) {
-        // read encoder and compute RPM
         int currentPosition = shooter.getCurrentPosition();
         int deltaTicks = currentPosition - lastShooterPosition;
         long deltaTimeMs = nowMs - lastShooterTime;
@@ -205,7 +192,7 @@ public class HORStimeauto extends LinearOpMode {
         lastShooterPosition = currentPosition;
         lastShooterTime = nowMs;
 
-        // feedforward + P controller (same math as teleop)
+        // feedforward + P controller
         double ff = (targetRPM / Math.max(1.0, MAX_RPM)) * ffGain;
         double error = targetRPM - currentRPM;
         double pTerm = kP * error;
@@ -214,7 +201,7 @@ public class HORStimeauto extends LinearOpMode {
 
         shooter.setPower(shooterOn ? shooterPower : 0.0);
 
-        // telemetry for debugging
+        // telemetry while running
         telemetry.addData("TargetRPM", "%.1f", targetRPM);
         telemetry.addData("RPM", "%.2f", currentRPM);
         telemetry.addData("Power", "%.3f", shooterOn ? shooter.getPower() : 0.0);
@@ -230,11 +217,31 @@ public class HORStimeauto extends LinearOpMode {
         }
     }
 
+    // New helper: wait up to maxWaitSeconds but return early if shooter reaches target ± tolerance
+    private boolean waitUntilAtTargetOrTimeout(double maxWaitSeconds) {
+        runtime.reset();
+        while (opModeIsActive() && runtime.seconds() < maxWaitSeconds) {
+            updateShooter(System.currentTimeMillis());
+            if (Math.abs(targetRPM - currentRPM) <= TARGET_TOLERANCE_RPM) {
+                telemetry.addData("WaitUntilAtTargetOrTimeout", "Reached after %.2fs", runtime.seconds());
+                telemetry.update();
+                return true;
+            }
+            telemetry.addData("WaitUntilAtTargetOrTimeout", "Waiting... %.2fs", runtime.seconds());
+            telemetry.addData("TargetRPM", "%.1f", targetRPM);
+            telemetry.addData("RPM", "%.2f", currentRPM);
+            telemetry.update();
+            idle();
+        }
+        telemetry.addData("WaitUntilAtTargetOrTimeout", "Timed out after %.2fs", maxWaitSeconds);
+        telemetry.update();
+        return false;
+    }
+
     // Helper: move turret to a target encoder position (blocking until reached or timeout)
     private void moveTurretToPosition(int targetTicks, double timeoutSeconds) {
         long start = System.currentTimeMillis();
         long timeoutMs = (long) (timeoutSeconds * 1000.0);
-        // simple proportional-ish motion: small constant power until near target
         while (opModeIsActive()) {
             int pos = turret.getCurrentPosition();
             int error = targetTicks - pos;
@@ -242,10 +249,8 @@ public class HORStimeauto extends LinearOpMode {
                 turret.setPower(0.0);
                 break;
             }
-            // decide direction
             double power = 0.25;
             if (error < 0) power = -0.25;
-            // reduce power when close
             if (Math.abs(error) < 50) power *= 0.5;
             turret.setPower(power);
 
@@ -256,7 +261,6 @@ public class HORStimeauto extends LinearOpMode {
             telemetry.update();
 
             if (System.currentTimeMillis() - start > timeoutMs) {
-                // timeout reached
                 turret.setPower(0.0);
                 break;
             }

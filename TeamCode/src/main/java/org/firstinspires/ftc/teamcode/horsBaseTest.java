@@ -6,7 +6,7 @@ import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
-@TeleOp(name="HORS BRAIN", group="Linear OpMode")
+@TeleOp(name="zNo run its old ", group="Linear OpMode")
 public class horsBaseTest extends LinearOpMode {
 
     private ElapsedTime runtime = new ElapsedTime();

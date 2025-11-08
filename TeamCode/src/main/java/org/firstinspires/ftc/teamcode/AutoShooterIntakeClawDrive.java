@@ -5,7 +5,7 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.Servo;
 
-@Autonomous(name="Auto Shooter Intake Claw Drive", group="Linear OpMode")
+@Autonomous(name="OLD far auto", group="Linear OpMode")
 public class AutoShooterIntakeClawDrive extends LinearOpMode {
 
     private DcMotor shooter, intakeMotor;
