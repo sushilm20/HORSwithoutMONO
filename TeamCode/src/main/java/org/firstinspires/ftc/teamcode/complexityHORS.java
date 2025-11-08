@@ -68,8 +68,8 @@ public class complexityHORS extends LinearOpMode {
     private static final double TURRET_SPEED_FAR   = 0.3;
     private static final double RIGHT_HOOD_CLOSE   = 0.12;
     private static final double RIGHT_HOOD_FAR     = 0.24;
-    private static final double TARGET_RPM_CLOSE   = 100.0;
-    private static final double TARGET_RPM_FAR     = 167.0;
+    private static final double TARGET_RPM_CLOSE   = 90.0;
+    private static final double TARGET_RPM_FAR     = 140.0;
 
     @Override
     public void runOpMode() {
