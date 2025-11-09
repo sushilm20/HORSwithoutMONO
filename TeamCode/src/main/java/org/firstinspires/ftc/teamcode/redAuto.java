@@ -6,8 +6,8 @@ import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
-@Autonomous(name="HORS Close Blue", group="Linear OpMode")
-public class HORScloseauto extends LinearOpMode {
+@Autonomous(name="HORS close red", group="Linear OpMode")
+public class redAuto extends LinearOpMode {
 
     // Drive motors (same names as teleop)
     private DcMotor frontLeftDrive, backLeftDrive, frontRightDrive, backRightDrive;
@@ -18,7 +18,7 @@ public class HORScloseauto extends LinearOpMode {
 
     private ElapsedTime runtime = new ElapsedTime();
 
-    // Shooter control state & tuning (copied from your teleop)
+    // Shooter control state & tuning (copied from da teleopping)
     private boolean shooterOn = false; // start OFF during movement stage per request
     private static final double MAX_RPM = 200.0; // matches your teleop file. the gobilda only does 190, (this is not rpm output of motor but the ticks per sec)
     private static final double TICKS_PER_REV = 537.6;
@@ -92,43 +92,36 @@ public class HORScloseauto extends LinearOpMode {
         waitForStart();
 
         // Sequence requested:
-        // 1) drive forward 1s
-        // 2) turn right 1s
-        // After movement/turn completed:
+        // 1) drive backward 1s (changed from forward)
+        // 2) (no turning)
+        // After movement completed:
         // 3) turn shooter on at RPM=120 (use PID loop)
         // 4) rotate turret to encoder position 300
         // 5) right hood servo to 0.24
         // 6) intake sequence: spin 1s, stop 1s, spin 1s, spin 1s, then claw action
-        // 7) turn off shooter and then move sideways (strafe) at the end
+        // 7) turn off shooter and then move sideways (strafe) at the end (opposite direction)
         // 8) stop everything and finish
 
-        // 1) Drive forward for 1s
+        // 1) Drive backward for 1s (negative power to move backward)
         setDrivePower(-0.6, -0.6);
-        holdForSeconds(1.0);
+        holdForSeconds(0.9);
 
         // brief stop
         setDrivePower(0.0, 0.0);
         holdForSeconds(0.05);
 
-//        // 2) Turn right for 1s (left positive, right negative)
-//        setDrivePower(0.5, -0.5);
-//        holdForSeconds(1.165);//gamble this
+        // NOTE: No turning step here per your request (removed/kept commented in original)
 
-        // stop drive
-        setDrivePower(0.0, 0.0);
-        holdForSeconds(0.05);
-
-        // 3) Turn shooter ON at 120 RPM (shooter loop will run continuously)
-        targetRPM = 135;
+        // 3) Turn shooter ON at 135 RPM (shooter loop will run continuously)
+        targetRPM = 130;
         shooterOn = true;
-        // kick-off shooter regulation loop briefly before turret movement
-        // hold a short period so shooter can begin spinning while turret moves
+        // allow shooter to spool up while we wait/move turret
         holdForSeconds(3);
 
-        // 4) Rotate turret to encoder position 300 (blocking until reached or timeout)
-        moveTurretToPosition(-1, 3); // 3s timeout to avoid infinite loop
+        // 4) Rotate turret to encoder position -30 (blocking until reached or timeout)
+        moveTurretToPosition(-30, 3); // 3s timeout to avoid infinite loop
 
-        // 5) Adjust shooter angle: right hood to 0.24 (shooter continues to be regulated)
+        // 5) Adjust shooter angle: right hood to ~0.20 (shooter continues to be regulated)
         rightHoodPosition = 0.20;
         rightHoodServo.setPosition(rightHoodPosition);
         holdForSeconds(0.15);
@@ -180,14 +173,15 @@ public class HORScloseauto extends LinearOpMode {
         intakeMotor.setPower(0.0);
         turret.setPower(0.0);
 
-        // 8) Move sideways at the end: strafe right for 1s
-        setStrafePower(0.6);
+        // 8) Move sideways at the end: STRAFE OPPOSITE DIRECTION compared to the original (left instead of right)
+        // original used setStrafePower(+0.6) to strafe right; this version strafes LEFT -> use negative value
+        setStrafePower(-0.6);
         holdForSeconds(1.0);
 
         // stop drive after strafing
         setDrivePower(0.0, 0.0);
 
-        telemetry.addData("Auto", "Sequence complete (including end strafe)");
+        telemetry.addData("Auto", "Sequence complete (including end strafe to opposite side)");
         telemetry.update();
 
         // final brief hold so telemetry can be read

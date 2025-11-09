@@ -35,6 +35,11 @@ public class complexityHORS extends LinearOpMode {
     private boolean dpadRightLast = false;
     private boolean xPressedLast = false;
 
+    // Added: left-trigger state and saved shooter state for restore
+    private boolean leftTriggerActiveLast = false;
+    private double savedTargetRPMBeforeLeftTrigger = -1.0;
+    private boolean savedShooterOnBeforeLeftTrigger = false;
+
     // rumble / in-target detection
     private boolean atTargetLast = false;
     private boolean rumbling = false;
@@ -298,16 +303,56 @@ public class complexityHORS extends LinearOpMode {
 
             // -------------------------
             // INTAKE + COMPRESSION
+            // New behavior:
+            // - If gamepad1.left_trigger pressed -> override: intake spins opposite of right-trigger direction,
+            //   compression servos reversed, shooter forced to 40 RPM and turned on.
+            // - Only gamepad1.left_trigger triggers this override.
+            // - When left trigger released, previous shooter target/state is restored.
+            // - Otherwise existing right-trigger (gamepad1 or gamepad2) behavior remains unchanged.
             // -------------------------
-            if ((gamepad1.right_trigger > 0.1) || (gamepad2.right_trigger > 0.1)) {
-                intakeMotor.setPower(1.0);
-                leftCompressionServo.setPosition(1.0);
-                rightCompressionServo.setPosition(0.0);
+            boolean leftTriggerNow = gamepad1.left_trigger > 0.1;
+
+            if (leftTriggerNow) {
+                // Rising-edge save previous shooter settings
+                if (!leftTriggerActiveLast) {
+                    savedTargetRPMBeforeLeftTrigger = targetRPM;
+                    savedShooterOnBeforeLeftTrigger = shooterOn;
+                    // Force shooter to requested 40 RPM and ensure it's on
+                    targetRPM = 40.0;
+                    shooterOn = true;
+                }
+
+                // Intake spins opposite to the right-trigger behavior (right-trigger uses +1.0)
+                intakeMotor.setPower(-1.0);
+
+                // Reverse compression servo positions compared to normal intake values
+                // Normal intake sets left=1.0, right=0.0. Reversed -> left=0.0, right=1.0.
+                leftCompressionServo.setPosition(0.0);
+                rightCompressionServo.setPosition(1.0);
             } else {
-                intakeMotor.setPower(0.0);
-                leftCompressionServo.setPosition(0.5);
-                rightCompressionServo.setPosition(0.5);
+                // Falling edge restore shooter state (if previously overridden)
+                if (leftTriggerActiveLast) {
+                    if (savedTargetRPMBeforeLeftTrigger >= 0.0) {
+                        targetRPM = savedTargetRPMBeforeLeftTrigger;
+                        savedTargetRPMBeforeLeftTrigger = -1.0;
+                    }
+                    shooterOn = savedShooterOnBeforeLeftTrigger;
+                    savedShooterOnBeforeLeftTrigger = false;
+                }
+
+                // Normal intake/compression handling (unchanged)
+                if ((gamepad1.right_trigger > 0.1) || (gamepad2.right_trigger > 0.1)) {
+                    intakeMotor.setPower(1.0);
+                    leftCompressionServo.setPosition(1.0);
+                    rightCompressionServo.setPosition(0.0);
+                } else {
+                    intakeMotor.setPower(0.0);
+                    leftCompressionServo.setPosition(0.5);
+                    rightCompressionServo.setPosition(0.5);
+                }
             }
+
+            leftTriggerActiveLast = leftTriggerNow;
 
             // -------------------------
             // CLAW single-press toggle using non-blocking timed phases
@@ -374,7 +419,7 @@ public class complexityHORS extends LinearOpMode {
 //            telemetry.addData("Claw Pos", "%.2f", clawServo.getPosition());
 //            telemetry.addData("Left Hood", "%.3f", leftHoodPosition);
             telemetry.addData("Right Hood", "%.3f", rightHoodPosition);
-//            telemetry.addData("Calibrate: Press Y", "sets rpmScale = targetRPM / rawRPM");
+            telemetry.addData("LeftTriggerOverride", leftTriggerNow);
             telemetry.update();
         }
     }
