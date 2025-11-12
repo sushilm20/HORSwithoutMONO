@@ -4,6 +4,12 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.Servo;
+import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
+import org.firstinspires.ftc.vision.VisionPortal;
+import org.firstinspires.ftc.vision.apriltag.AprilTagDetection;
+import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor;
+
+import java.util.List;
 
 @TeleOp(name="ComplexityHORS", group="Linear OpMode")
 public class complexityHORS extends LinearOpMode {
@@ -12,6 +18,12 @@ public class complexityHORS extends LinearOpMode {
     private DcMotor shooter, turret, intakeMotor;
     private Servo clawServo, leftCompressionServo, rightCompressionServo;
     private Servo leftHoodServo, rightHoodServo;
+
+    // AprilTag tracking components
+    private AprilTagProcessor aprilTag;
+    private VisionPortal visionPortal;
+    private TurretTracker turretTracker;
+    private static final int TARGET_APRILTAG_ID = 22;
 
     // shooter control state
     private boolean shooterOn = true; // default start ON
@@ -68,6 +80,11 @@ public class complexityHORS extends LinearOpMode {
     private boolean isFarMode = false;               // default = close
     private boolean touchpadPressedLast = false;     // for rising-edge detection
 
+    // --- NEW: Turret tracking toggle controlled by gamepad2 touchpad ---
+    // Default is tracking disabled. A tap (rising edge) toggles on/off.
+    private boolean turretTrackingEnabled = false;
+    private boolean gamepad2TouchpadPressedLast = false; // for rising-edge detection
+
     // Mode-specific parameters (user requested values)
     private static final double TURRET_SPEED_CLOSE = 0.3;
     private static final double TURRET_SPEED_FAR   = 0.3;
@@ -104,6 +121,10 @@ public class complexityHORS extends LinearOpMode {
         turret.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         turret.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         turret.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
+
+        // Initialize AprilTag detection and TurretTracker
+        initializeAprilTag();
+        turretTracker = new TurretTracker(turret, TARGET_APRILTAG_ID);
 
         // initial servo positions
         clawServo.setPosition(0.63);
@@ -170,6 +191,24 @@ public class complexityHORS extends LinearOpMode {
                 }
             }
             touchpadPressedLast = touchpadNow;
+
+            // -------------------------
+            // Handle turret tracking toggle (touchpad tap on gamepad2)
+            // -------------------------
+            boolean gamepad2TouchpadNow = false;
+            // Try to read a PS5 touchpad mapping if available; fallback to both-stick-press as an alternate tap
+            try {
+                gamepad2TouchpadNow = gamepad2.touchpad;
+            } catch (Throwable t) {
+                // Fallback: simultaneous press of both stick buttons as alternate "touchpad tap"
+                gamepad2TouchpadNow = (gamepad2.left_stick_button && gamepad2.right_stick_button);
+            }
+
+            if (gamepad2TouchpadNow && !gamepad2TouchpadPressedLast) {
+                // Rising edge detected: toggle turret tracking
+                turretTrackingEnabled = !turretTrackingEnabled;
+            }
+            gamepad2TouchpadPressedLast = gamepad2TouchpadNow;
 
             // -------------------------
             // DRIVE
@@ -283,23 +322,20 @@ public class complexityHORS extends LinearOpMode {
             }
 
             // -------------------------
-            // TURRET control with encoder limits (non-blocking)
-            // turret speed is adjusted by current mode (far/close)
+            // TURRET control using TurretTracker (AprilTag tracking)
+            // Turret tracking can be toggled on/off using gamepad2 touchpad
+            // All tuning parameters remain in TurretTracker class
             // -------------------------
-            int turretPos = turret.getCurrentPosition();
-            double turretPower = 0.0;
-
-            // Choose speed based on mode
-            double turretSpeed = isFarMode ? TURRET_SPEED_FAR : TURRET_SPEED_CLOSE;
-
-            if (gamepad1.right_bumper || gamepad2.left_stick_x > 0.2) {
-                if (turretPos < TURRET_MAX_POS) turretPower = turretSpeed;
-            } else if (gamepad1.left_bumper || gamepad2.left_stick_x < -0.2) {
-                if (turretPos > TURRET_MIN_POS) turretPower = -turretSpeed;
+            String turretStatus;
+            if (turretTrackingEnabled) {
+                // Tracking is enabled - use TurretTracker state machine
+                AprilTagDetection targetDetection = findTargetAprilTag();
+                turretStatus = turretTracker.updateTurret(targetDetection);
             } else {
-                turretPower = 0.0;
+                // Tracking is disabled - stop turret
+                turretTracker.stop();
+                turretStatus = "Tracking Disabled";
             }
-            turret.setPower(turretPower);
 
             // -------------------------
             // INTAKE + COMPRESSION
@@ -414,6 +450,8 @@ public class complexityHORS extends LinearOpMode {
 //            telemetry.addData("rpmScale", "%.4f", rpmScale);
             telemetry.addData("Shooter Power", "%.3f", shooterOn ? shooterPower : 0.0);
 //            telemetry.addData("At Target", atTargetNow);
+            telemetry.addData("Turret Tracking", turretTrackingEnabled ? "ENABLED" : "DISABLED");
+            telemetry.addData("Turret Status", turretStatus);
             telemetry.addData("Turret Encoder", turret.getCurrentPosition());
 //            telemetry.addData("Turret Speed (mode)", "%.3f", turretSpeed);
 //            telemetry.addData("Claw Pos", "%.2f", clawServo.getPosition());
@@ -422,5 +460,38 @@ public class complexityHORS extends LinearOpMode {
             telemetry.addData("LeftTriggerOverride", leftTriggerNow);
             telemetry.update();
         }
+
+        // Clean up vision portal on exit
+        if (visionPortal != null) {
+            visionPortal.close();
+        }
+    }
+
+    /**
+     * Initialize AprilTag processor and vision portal
+     */
+    private void initializeAprilTag() {
+        // Create the AprilTag processor
+        aprilTag = AprilTagProcessor.easyCreateWithDefaults();
+        
+        // Create the vision portal using webcam1
+        visionPortal = VisionPortal.easyCreateWithDefaults(
+            hardwareMap.get(WebcamName.class, "webcam1"), aprilTag);
+    }
+
+    /**
+     * Find the target AprilTag in the current detections
+     * @return The target AprilTag detection, or null if not found
+     */
+    private AprilTagDetection findTargetAprilTag() {
+        List<AprilTagDetection> currentDetections = aprilTag.getDetections();
+        
+        for (AprilTagDetection detection : currentDetections) {
+            if (detection.id == TARGET_APRILTAG_ID) {
+                return detection;
+            }
+        }
+        
+        return null;
     }
 }
